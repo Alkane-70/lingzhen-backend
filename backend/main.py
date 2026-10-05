@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv, find_dotenv
 from backend.rag_service import search_medical_context
 from backend.graph_service import get_graph_path
+from backend.database import SessionLocal, DiagnosisRecord
 
 load_dotenv(find_dotenv())
 client = ZhipuAI(api_key=os.getenv("ZHIPU_API_KEY"))
@@ -60,4 +61,22 @@ async def diagnose(req: SymptomRequest):
         response_format={"type": "json_object"}
     )
     
-    return json.loads(response.choices[0].message.content)
+# 解析大模型返回的JSON
+    result = json.loads(response.choices[0].message.content)
+
+# === 新增：存入SQLite数据库 ===
+    db = SessionLocal()
+    try:
+        record = DiagnosisRecord(
+            symptom=symptom,
+            department=result.get("department"),
+            confidence=result.get("confidence"),
+            reason=result.get("reason")
+        )
+        db.add(record)
+        db.commit()
+    finally:
+        db.close()
+# ==============================
+
+    return result
