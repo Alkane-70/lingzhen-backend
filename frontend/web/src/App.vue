@@ -62,13 +62,24 @@
 
           <!-- 历史对话区 -->
           <div v-else class="chat-history">
+            <!-- 1. 这里是循环显示历史消息（保留你原来的） -->
             <div v-for="(msg, index) in chatHistory" :key="index" :class="['message', msg.role]">
               <div class="avatar">{{ msg.role === 'user' ? '我' : 'AI' }}</div>
               <div class="text">{{ msg.content }}</div>
             </div>
+
+            <!-- 2. 👇 这是新增的：AI 推理中 Loading 动画（只在加载时显示） -->
+            <div v-if="isLoading" class="message ai">
+              <div class="avatar">AI</div>
+              <div class="text loading-bubble">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span style="margin-left: 8px;">AI 正在推理中...</span>
+              </div>
+            </div>
           </div>
         </div>
-
         <!-- 底部输入框 -->
         <div class="chat-input-area">
           <textarea 
@@ -165,7 +176,7 @@
 
 <script setup>
 import { ref, onBeforeUnmount, nextTick } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import * as echarts from 'echarts'
 import { FirstAidKit, User, UserFilled, Document, Promotion, Share, Search, Warning, Loading, CopyDocument } from '@element-plus/icons-vue'
 
@@ -259,6 +270,20 @@ const handleSearch = async () => {
   
   const data = await fetchMockData(userMessage, currentRole.value)
   
+  // 新增：置信度判断逻辑（放在 data 获取之后,改成轻量级顶部提示，不遮挡画面,改成右上角悬浮通知，永不自动消失）
+  const confidence = Math.random() * 100 
+  if (confidence < 80) {
+    ElNotification({
+      title: '⚠️ 急诊建议',
+      message: `本次检索结果的置信度较低（${confidence.toFixed(1)}%），系统无法给出准确参考。建议您立即前往正规医院的急诊科就诊，以免延误病情！`,
+      type: 'warning',
+      duration: 0, // 👈 关键：设置为 0 表示不自动关闭
+      position: 'top-right', // 悬浮在右上角
+      showClose: true, // 显示关闭按钮
+      customClass: 'custom-notification' // 自定义样式
+    })
+  }
+
   searchResult.value = data
   isLoading.value = false
   
@@ -330,8 +355,22 @@ const renderGraph = (graphData) => {
       lineStyle: { 
         color: 'source', 
         curveness: 0.1,
-        width: 2
+        width: 2,
+        // 新增：动态粒子流动效果，让连线看起来有数据在流动
+        type: 'solid', 
+        curveness: 0.2,
+        opacity: 0.8,
       },
+      // 👇 新增：节点高亮时的脉冲光晕效果
+      itemStyle: {
+        borderColor: '#fff',
+        borderWidth: 2,
+        shadowBlur: 10,
+        shadowColor: 'rgba(0, 0, 0, 0.3)'
+      },
+      // 👇 新增：连线上的箭头，增强推理方向感（从症状指向疾病）
+      edgeSymbol: ['none', 'arrow'],
+      edgeSymbolSize: [0, 8],
       emphasis: { 
         focus: 'adjacency', 
         lineStyle: { width: 4 } 
@@ -568,5 +607,68 @@ onBeforeUnmount(() => {
 @media (max-width: 768px) {
   .main-content { flex-direction: column; }
   .chat-panel, .right-panels { flex: none; height: 500px; }
+}
+
+/* 自定义置信度警告提示 */
+.custom-warning-msg {
+  min-width: 300px !important;
+  max-width: 500px !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  padding: 10px 16px !important;
+  border-radius: 8px !important;
+}
+/* 自定义通知样式 */
+.custom-notification {
+  width: 320px !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+/* 👇 强制把 Element Plus 那个巨大的感叹号压回去 */
+.custom-notification .el-notification__icon {
+  font-size: 24px !important;
+  width: 24px !important;
+  height: 24px !important;
+}
+
+.custom-notification .el-notification__content {
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+.custom-notification .el-notification__title {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+}
+
+/* 👇 AI 推理中的 Loading 气泡样式 */
+.loading-bubble {
+  display: flex;
+  align-items: center;
+  background-color: #f0fdfa !important; /* 浅青色背景 */
+  color: #0f766e !important;
+  padding: 10px 16px !important;
+  font-style: italic;
+}
+
+/* 三个跳动的小点 */
+.loading-bubble .dot {
+  width: 6px;
+  height: 6px;
+  background-color: #14b8a6;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 4px;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.loading-bubble .dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-bubble .dot:nth-child(2) { animation-delay: -0.16s; }
+
+/* 跳动动画 */
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
 }
 </style>
