@@ -175,6 +175,7 @@
 </template>
 
 <script setup>
+import axios from 'axios'
 import { ref, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import * as echarts from 'echarts'
@@ -191,62 +192,85 @@ const searchResult = ref(null)
 const chartRef = ref(null)
 let myChart = null
 
-// 模拟后端返回（头晕恶心专门定制，其他走通用图谱）
-const fetchMockData = (query, role) => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      // 1. 先定义“通用兜底图谱”（其他所有词都走这个）
-      let graphData = {
-        nodes: [
-          { name: query, category: 1, symbolSize: 65 }, // 把用户输入当作核心疾病/关键词
-          { name: '常见症状A', category: 0, symbolSize: 45 },
-          { name: '常见症状B', category: 0, symbolSize: 45 },
-          { name: '相关科室', category: 2, symbolSize: 55 },
-          { name: '建议检查', category: 3, symbolSize: 45 }
-        ],
-        links: [
-          { source: query, target: '常见症状A', value: '可能症状' },
-          { source: query, target: '常见症状B', value: '伴随症状' },
-          { source: query, target: '相关科室', value: '就诊科室' },
-          { source: query, target: '建议检查', value: '建议检查' }
-        ]
+// 模拟后端返回（完全模拟队友 AI 的契约格式）
+// 调用你本地的真实 Python 服务器（不再是 Mock 了）
+const fetchMockData = async (query, role) => {
+  try {
+    const response = await axios.post('http://127.0.0.1:8000/api/diagnose', {
+      symptom: query,   // 把用户输入的症状传给后端
+      age: "25岁",
+      gender: "男"
+    })
+    
+    const data = response.data
+    
+    //  直接根据后端返回的 type 来染色
+    const nodes = data.graph_nodes.map((node) => {
+      let category = 0 // 症状（黄）
+      if (node.type === 'department') category = 2 // 科室（蓝）
+      if (node.type === 'disease') category = 1 // 疾病（红）
+
+      // 科室节点大一点
+      const size = node.type === 'department' ? 60 : 50
+      return { name: node.name, category: category, symbolSize: size }
+    })
+    
+    //  智能生成连线：症状 -> 疾病 -> 科室
+    const links = []
+    
+    // 先把节点按类型分好组
+    const symptoms = data.graph_nodes.filter(n => n.type === 'symptom')
+    const diseases = data.graph_nodes.filter(n => n.type === 'disease')
+    
+    // 1. 症状 连向 疾病（如果有疾病的话）
+    symptoms.forEach(sym => {
+      if (diseases.length > 0) {
+        links.push({
+          source: sym.name,
+          target: diseases[0].name,
+          value: '可能症状'
+        })
       }
-
-      // 2. 如果输入包含“头晕”或“恶心”，就用专门定制的完整图谱覆盖掉通用版
-      if (query.includes('头晕') || query.includes('恶心')) {
-        graphData = {
-          nodes: [
-            { name: '头晕', category: 0, symbolSize: 55 }, // 症状（黄）
-            { name: '恶心', category: 0, symbolSize: 45 }, // 症状（黄）
-            { name: '高血压', category: 1, symbolSize: 60 }, // 疾病（红）
-            { name: '脑卒中', category: 1, symbolSize: 55 }, // 疾病（红）
-            { name: '神经内科', category: 2, symbolSize: 55 }, // 科室（蓝）
-            { name: '心血管内科', category: 2, symbolSize: 55 } // 科室（蓝）
-          ],
-          links: [
-            { source: '头晕', target: '高血压', value: '常见症状' },
-            { source: '恶心', target: '高血压', value: '伴随症状' },
-            { source: '头晕', target: '脑卒中', value: '预警症状' },
-            { source: '高血压', target: '心血管内科', value: '就诊' },
-            { source: '脑卒中', target: '神经内科', value: '就诊' },
-            { source: '头晕', target: '神经内科', value: '直接就诊' }
-          ]
-        }
-      }
-
-      // 根据角色生成不同摘要
-      const summary = role === 'patient' 
-        ? `关于您提到的“${query}”，根据医学百科库综合检索，建议您注意休息。若症状持续，请前往正规医院就诊。此结论仅做科普参考。`
-        : `针对“${query}”的临床检索结果：需结合具体症状排查病因，建议进行相关检查。此结论仅供参考。`
-
-      resolve({
-        summary,
-        citations: ['《内科学（第9版）》 人民卫生出版社', '中国居民健康指南 2023版'],
-        graphData
+    })
+    
+    // 2. 疾病 连向 科室
+    diseases.forEach(dis => {
+      links.push({
+        source: dis.name,
+        target: data.department,
+        value: '建议就诊'
       })
-    }, 1500)
-  })
+    })
+    
+    // 3. 如果没有识别出疾病，症状直接连科室
+    if (diseases.length === 0) {
+      symptoms.forEach(sym => {
+        links.push({
+          source: sym.name,
+          target: data.department,
+          value: '建议就诊'
+        })
+      })
+    }
+    
+    return {
+      summary: `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。此结论仅做科普参考。`,
+      citations: ['智谱AI GLM-4-Flash 实时生成', '《内科学（第9版）》'],
+      confidence: data.confidence,
+      graphData: { nodes, links }
+    }
+  } catch (error) {
+    console.error('联调失败:', error)
+    ElMessage.error('后端接口调用失败，请检查 Python 服务是否启动')
+    return {
+      summary: '网络异常，请检查后端服务是否启动。',
+      citations: [],
+      confidence: 0.5,
+      graphData: { nodes: [{ name: '接口错误', category: 1, symbolSize: 60 }], links: [] }
+    }
+  }
 }
+
 
 // 核心检索
 const handleSearch = async () => {
@@ -271,7 +295,7 @@ const handleSearch = async () => {
   const data = await fetchMockData(userMessage, currentRole.value)
   
   // 新增：置信度判断逻辑（放在 data 获取之后,改成轻量级顶部提示，不遮挡画面,改成右上角悬浮通知，永不自动消失）
-  const confidence = Math.random() * 100 
+  const confidence = (data.confidence || 0.9) * 100
   if (confidence < 80) {
     ElNotification({
       title: '⚠️ 急诊建议',
