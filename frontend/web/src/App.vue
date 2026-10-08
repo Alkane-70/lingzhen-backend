@@ -197,61 +197,57 @@ let myChart = null
 const fetchMockData = async (query, role) => {
   try {
     const response = await axios.post('http://127.0.0.1:8000/api/diagnose', {
-      symptom: query,   // 把用户输入的症状传给后端
+      symptom: query,
+      role: role,   // 👈 新增：告诉后端我是医生还是患者
       age: "25岁",
       gender: "男"
-    })
+    },
+    {
+        timeout: 15000  // 👈 新增：设置 15 秒超时，防止大模型还没生成完就断开
+    }
+  )
     
     const data = response.data
     
     //  直接根据后端返回的 type 来染色
-    const nodes = data.graph_nodes.map((node) => {
+        const nodes = data.graph_nodes.map((node) => {
       let category = 0 // 症状（黄）
       if (node.type === 'department') category = 2 // 科室（蓝）
       if (node.type === 'disease') category = 1 // 疾病（红）
+      if (node.type === 'drug') category = 3 // 👈 新增：药物（绿）
 
-      // 科室节点大一点
       const size = node.type === 'department' ? 60 : 50
       return { name: node.name, category: category, symbolSize: size }
     })
     
     //  智能生成连线：症状 -> 疾病 -> 科室
-    const links = []
+       const links = []
+    const dept = data.department
     
-    // 先把节点按类型分好组
-    const symptoms = data.graph_nodes.filter(n => n.type === 'symptom')
-    const diseases = data.graph_nodes.filter(n => n.type === 'disease')
-    
-    // 1. 症状 连向 疾病（如果有疾病的话）
-    symptoms.forEach(sym => {
-      if (diseases.length > 0) {
-        links.push({
-          source: sym.name,
-          target: diseases[0].name,
-          value: '可能症状'
-        })
+    data.graph_nodes.forEach(node => {
+      // 1. 症状 -> 疾病
+      if (node.type === 'symptom') {
+        const targetDisease = data.graph_nodes.find(n => n.type === 'disease')
+        if (targetDisease) {
+          links.push({ source: node.name, target: targetDisease.name, value: '可能症状' })
+        }
+      }
+      // 2. 疾病 -> 科室
+      if (node.type === 'disease') {
+        links.push({ source: node.name, target: dept, value: '建议就诊' })
+      }
+      // 3. 药物 -> 疾病
+      if (node.type === 'drug') {
+        const targetDisease = data.graph_nodes.find(n => n.type === 'disease')
+        if (targetDisease) {
+          links.push({ source: node.name, target: targetDisease.name, value: '主治' })
+        }
+      }
+      // 4. 兜底：如果没有疾病，症状/药物直接连科室
+      if ((node.type === 'symptom' || node.type === 'drug') && !data.graph_nodes.some(n => n.type === 'disease')) {
+        links.push({ source: node.name, target: dept, value: '相关' })
       }
     })
-    
-    // 2. 疾病 连向 科室
-    diseases.forEach(dis => {
-      links.push({
-        source: dis.name,
-        target: data.department,
-        value: '建议就诊'
-      })
-    })
-    
-    // 3. 如果没有识别出疾病，症状直接连科室
-    if (diseases.length === 0) {
-      symptoms.forEach(sym => {
-        links.push({
-          source: sym.name,
-          target: data.department,
-          value: '建议就诊'
-        })
-      })
-    }
     
     return {
       summary: `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。此结论仅做科普参考。`,
@@ -334,10 +330,11 @@ const renderGraph = (graphData) => {
   }
   myChart = echarts.init(chartRef.value)
 
-  const categories = [
+    const categories = [
     { name: '症状', itemStyle: { color: '#f59e0b' } },
     { name: '疾病/建议', itemStyle: { color: '#ef4444' } },
-    { name: '科室', itemStyle: { color: '#3b82f6' } }
+    { name: '科室', itemStyle: { color: '#3b82f6' } },
+    { name: '药物/文献', itemStyle: { color: '#10b981' } } // 👈 新增：绿色
   ]
 
   const option = {
