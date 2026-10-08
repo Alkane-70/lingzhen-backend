@@ -62,13 +62,24 @@
 
           <!-- 历史对话区 -->
           <div v-else class="chat-history">
+            <!-- 1. 这里是循环显示历史消息（保留你原来的） -->
             <div v-for="(msg, index) in chatHistory" :key="index" :class="['message', msg.role]">
               <div class="avatar">{{ msg.role === 'user' ? '我' : 'AI' }}</div>
               <div class="text">{{ msg.content }}</div>
             </div>
+
+            <!-- 2. 👇 这是新增的：AI 推理中 Loading 动画（只在加载时显示） -->
+            <div v-if="isLoading" class="message ai">
+              <div class="avatar">AI</div>
+              <div class="text loading-bubble">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span style="margin-left: 8px;">AI 正在推理中...</span>
+              </div>
+            </div>
           </div>
         </div>
-
         <!-- 底部输入框 -->
         <div class="chat-input-area">
           <textarea 
@@ -89,9 +100,26 @@
 
       <!-- 右侧结果面板 -->
       <div class="right-panels">
-        <!-- 知识图谱占位区 -->
+        <!-- 知识图谱区（ECharts） -->
         <div class="panel graph-panel">
-          <div class="graph-placeholder">
+          <!-- 加载状态 -->
+          <div v-if="isGraphLoading" class="graph-loading">
+            <el-icon class="is-loading" :size="40" color="#14b8a6"><Loading /></el-icon>
+            <h3>正在构建知识图谱...</h3>
+          </div>
+          
+          <!-- 👇 新增：图谱缩放按钮 -->
+          <div class="graph-controls">
+            <button @click="zoomGraph(1.2)">➕ 放大</button>
+            <button @click="zoomGraph(0.8)">➖ 缩小</button>
+            <button @click="zoomGraph(1, true)">🔄 复位</button>
+          </div>
+
+          <!-- ECharts 容器 -->
+          <div v-show="!isGraphLoading && searchResult" ref="chartRef" class="chart-container"></div>
+          
+          <!-- 无数据时的占位 -->
+          <div v-if="!isGraphLoading && !searchResult" class="graph-placeholder">
             <el-icon :size="40" color="#14b8a6"><Share /></el-icon>
             <h3>知识图谱区域</h3>
             <p>预留位置，后续接入知识图谱可视化</p>
@@ -118,13 +146,20 @@
               <p>{{ searchResult.summary }}</p>
             </div>
             
-            <div class="citations">
+                       <div class="citations">
               <h4>📚 知识来源（可溯源）：</h4>
               <ul>
                 <li v-for="(cite, i) in searchResult.citations" :key="i">
                   <a href="#">{{ cite }}</a>
                 </li>
               </ul>
+            </div>
+
+            <!-- 👇 新增：一键复制分诊结果 -->
+            <div class="action-buttons">
+              <el-button type="success" plain @click="copyResult">
+                <el-icon><CopyDocument /></el-icon> 一键复制分诊结果
+              </el-button>
             </div>
           </div>
         </div>
@@ -140,35 +175,104 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
-// 注意：这里移除了会报错的 Stethoscope，换成了 UserFilled
-import { FirstAidKit, User, UserFilled, Document, Promotion, Share, Search, Warning } from '@element-plus/icons-vue'
+import axios from 'axios'
+import { ref, onBeforeUnmount, nextTick } from 'vue'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
+import * as echarts from 'echarts'
+import { FirstAidKit, User, UserFilled, Document, Promotion, Share, Search, Warning, Loading, CopyDocument } from '@element-plus/icons-vue'
 
 const currentRole = ref('patient')
 const queryInput = ref('')
 const isLoading = ref(false)
+const isGraphLoading = ref(false)
 const chatHistory = ref([])
 const searchResult = ref(null)
 
-const fetchMockData = (query, role) => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      if (role === 'patient') {
-        resolve({
-          summary: `关于您提到的“${query}”，根据医学百科库综合检索，建议您保持良好的作息，症状持续请前往正规医院就诊。此结论仅做科普参考。`,
-          citations: ['《内科学（第9版）》 人民卫生出版社', '中国居民健康指南 2023版']
-        })
-      } else {
-        resolve({
-          summary: `针对“${query}”的临床检索结果：最新临床指南推荐一线用药方案，需关注患者的个体化差异及药物相互作用。建议结合基因检测结果制定方案。`,
-          citations: ['UpToDate 临床顾问', '《新英格兰医学杂志》 2024年最新综述', '脱敏临床案例库：病例编号 202406']
+// ECharts 相关
+const chartRef = ref(null)
+let myChart = null
+
+// 模拟后端返回（完全模拟队友 AI 的契约格式）
+// 调用你本地的真实 Python 服务器（不再是 Mock 了）
+const fetchMockData = async (query, role) => {
+  try {
+    const response = await axios.post('http://127.0.0.1:8000/api/diagnose', {
+      symptom: query,   // 把用户输入的症状传给后端
+      age: "25岁",
+      gender: "男"
+    })
+    
+    const data = response.data
+    
+    //  直接根据后端返回的 type 来染色
+    const nodes = data.graph_nodes.map((node) => {
+      let category = 0 // 症状（黄）
+      if (node.type === 'department') category = 2 // 科室（蓝）
+      if (node.type === 'disease') category = 1 // 疾病（红）
+
+      // 科室节点大一点
+      const size = node.type === 'department' ? 60 : 50
+      return { name: node.name, category: category, symbolSize: size }
+    })
+    
+    //  智能生成连线：症状 -> 疾病 -> 科室
+    const links = []
+    
+    // 先把节点按类型分好组
+    const symptoms = data.graph_nodes.filter(n => n.type === 'symptom')
+    const diseases = data.graph_nodes.filter(n => n.type === 'disease')
+    
+    // 1. 症状 连向 疾病（如果有疾病的话）
+    symptoms.forEach(sym => {
+      if (diseases.length > 0) {
+        links.push({
+          source: sym.name,
+          target: diseases[0].name,
+          value: '可能症状'
         })
       }
-    }, 1500)
-  })
+    })
+    
+    // 2. 疾病 连向 科室
+    diseases.forEach(dis => {
+      links.push({
+        source: dis.name,
+        target: data.department,
+        value: '建议就诊'
+      })
+    })
+    
+    // 3. 如果没有识别出疾病，症状直接连科室
+    if (diseases.length === 0) {
+      symptoms.forEach(sym => {
+        links.push({
+          source: sym.name,
+          target: data.department,
+          value: '建议就诊'
+        })
+      })
+    }
+    
+    return {
+      summary: `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。此结论仅做科普参考。`,
+      citations: ['智谱AI GLM-4-Flash 实时生成', '《内科学（第9版）》'],
+      confidence: data.confidence,
+      graphData: { nodes, links }
+    }
+  } catch (error) {
+    console.error('联调失败:', error)
+    ElMessage.error('后端接口调用失败，请检查 Python 服务是否启动')
+    return {
+      summary: '网络异常，请检查后端服务是否启动。',
+      citations: [],
+      confidence: 0.5,
+      graphData: { nodes: [{ name: '接口错误', category: 1, symbolSize: 60 }], links: [] }
+    }
+  }
 }
 
+
+// 核心检索
 const handleSearch = async () => {
   if (!queryInput.value.trim()) {
     ElMessage.warning('请输入检索内容')
@@ -179,16 +283,185 @@ const handleSearch = async () => {
   chatHistory.value.push({ role: 'user', content: userMessage })
   
   isLoading.value = true
+  isGraphLoading.value = true // 开启图谱 loading
   searchResult.value = null 
+  
+  // 👇 新增：彻底销毁旧的 ECharts 实例，连骨头都不剩
+  if (myChart) {
+    myChart.dispose()
+    myChart = null // 置空，强制下一次重新 init
+  }
   
   const data = await fetchMockData(userMessage, currentRole.value)
   
+  // 新增：置信度判断逻辑（放在 data 获取之后,改成轻量级顶部提示，不遮挡画面,改成右上角悬浮通知，永不自动消失）
+  const confidence = (data.confidence || 0.9) * 100
+  if (confidence < 80) {
+    ElNotification({
+      title: '⚠️ 急诊建议',
+      message: `本次检索结果的置信度较低（${confidence.toFixed(1)}%），系统无法给出准确参考。建议您立即前往正规医院的急诊科就诊，以免延误病情！`,
+      type: 'warning',
+      duration: 0, // 👈 关键：设置为 0 表示不自动关闭
+      position: 'top-right', // 悬浮在右上角
+      showClose: true, // 显示关闭按钮
+      customClass: 'custom-notification' // 自定义样式
+    })
+  }
+
   searchResult.value = data
-  chatHistory.value.push({ role: 'ai', content: '已为您检索到相关资料，请查看右侧结论。' })
-  
   isLoading.value = false
+  
+  // 等待 DOM 更新后，渲染图谱
+  nextTick(() => {
+    setTimeout(() => {
+      isGraphLoading.value = false
+      renderGraph(data.graphData)
+    }, 800) // 模拟科技感的渲染延迟
+  })
+  
+  chatHistory.value.push({ role: 'ai', content: '已为您检索到相关资料，请查看右侧结论。' })
   queryInput.value = '' 
 }
+
+// 渲染 ECharts 图谱
+// 渲染 ECharts 图谱（最终修复版）
+const renderGraph = (graphData) => {
+  if (!chartRef.value) return
+  
+  // 1. 销毁旧的实例，确保重新初始化能拿到正确的尺寸
+  if (myChart) {
+    myChart.dispose()
+  }
+  myChart = echarts.init(chartRef.value)
+
+  const categories = [
+    { name: '症状', itemStyle: { color: '#f59e0b' } },
+    { name: '疾病/建议', itemStyle: { color: '#ef4444' } },
+    { name: '科室', itemStyle: { color: '#3b82f6' } }
+  ]
+
+  const option = {
+    tooltip: {},
+    legend: { 
+      data: categories.map(c => c.name), 
+      bottom: 10,
+      left: 'center'
+    },
+    series: [{
+      type: 'graph',
+      layout: 'force', 
+      data: graphData.nodes,
+      links: graphData.links,
+      categories: categories,
+      roam: true, 
+      center: ['50%', '50%'], 
+      zoom: 1.2,
+      label: { 
+        show: true, 
+        position: 'right', 
+        formatter: '{b}',
+        fontSize: 14,
+        color: '#1f2937'
+      },
+      force: {
+        repulsion: 1500, // 斥力调小一点，让节点不至于飞出屏幕
+        edgeLength: 150, // 连线长度
+        gravity: 0.1,    // 加大重力，把节点往中间拉
+        layoutAnimation: true 
+      },
+      // 新增：显示连线上的关系文字（比如“常见症状”、“就诊”）
+      edgeLabel: {
+        show: true,
+        formatter: '{c}', // 显示数据里 value 的值
+        fontSize: 12,
+        color: '#6b7280'
+      },
+      lineStyle: { 
+        color: 'source', 
+        curveness: 0.1,
+        width: 2,
+        // 新增：动态粒子流动效果，让连线看起来有数据在流动
+        type: 'solid', 
+        curveness: 0.2,
+        opacity: 0.8,
+      },
+      // 👇 新增：节点高亮时的脉冲光晕效果
+      itemStyle: {
+        borderColor: '#fff',
+        borderWidth: 2,
+        shadowBlur: 10,
+        shadowColor: 'rgba(0, 0, 0, 0.3)'
+      },
+      // 👇 新增：连线上的箭头，增强推理方向感（从症状指向疾病）
+      edgeSymbol: ['none', 'arrow'],
+      edgeSymbolSize: [0, 8],
+      emphasis: { 
+        focus: 'adjacency', 
+        lineStyle: { width: 4 } 
+      }
+    }]
+  }
+
+  myChart.setOption(option, true)
+  
+  // 👇 关键修复：强制 resize，解决缩在左上角的问题
+  myChart.resize()
+  setTimeout(() => {
+    if (myChart) myChart.resize()
+  }, 200)
+
+  // 监听窗口变化，自适应
+  window.addEventListener('resize', () => { myChart && myChart.resize() })
+}
+
+// 图谱缩放控制
+const zoomGraph = (factor, isReset = false) => {
+  if (!myChart) return
+  
+  // 获取当前图表的配置
+  const option = myChart.getOption()
+  let currentZoom = option.series[0].zoom || 1
+  
+  if (isReset) {
+    currentZoom = 1 // 复位
+  } else {
+    currentZoom = currentZoom * factor // 按比例放大或缩小
+  }
+  
+  // 限制缩放范围，防止图飞走或者缩成一个点
+  currentZoom = Math.max(0.3, Math.min(currentZoom, 4))
+  
+  // 更新图表
+  myChart.setOption({
+    series: [{
+      zoom: currentZoom
+    }]
+  })
+}
+
+// 👇 新增：一键复制分诊结果
+const copyResult = () => {
+  if (!searchResult.value) return
+  
+  // 把结论和来源拼成一段文本
+  const text = `【${currentRole.value === 'doctor' ? '医生版' : '患者版'}检索结果】\n` +
+               `结论：${searchResult.value.summary}\n` +
+               `引用来源：\n${searchResult.value.citations.join('\n')}`
+  
+  // 调用浏览器剪贴板 API 复制
+  navigator.clipboard.writeText(text).then(() => {
+    ElMessage.success('分诊结果已复制到剪贴板！')
+  }).catch(() => {
+    ElMessage.error('复制失败，请手动复制')
+  })
+}
+
+
+
+// 清理
+onBeforeUnmount(() => {
+  if (myChart) myChart.dispose()
+})
 </script>
 
 <style scoped>
@@ -246,13 +519,73 @@ const handleSearch = async () => {
 .input-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 10px;}
 .input-tip { font-size: 12px; color: #9ca3af;}
 
-.right-panels { flex: 1; display: flex; flex-direction: column; gap: 20px; overflow: hidden;}
-.graph-panel { flex: 1; min-height: 200px;}
-.graph-placeholder { width: 100%; height: 100%; border: 2px dashed #d1d5db; border-radius: 8px; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #6b7280; gap: 10px; margin: 15px; width: calc(100% - 30px); height: calc(100% - 30px);}
+.right-panels { 
+  flex: 1; 
+  display: flex; 
+  flex-direction: column; 
+  gap: 20px; 
+  /* 👇 把 overflow: hidden 改成下面这两个，防止内容被挤压 */
+  overflow-y: auto; 
+  min-height: 0; 
+}
+.graph-panel { 
+  /* 👇 不要用 flex:1，改用固定高度，保证图谱绝对有位置显示 */
+  flex: none;
+  height: 350px; 
+  position: relative; 
+  display: flex; 
+  flex-direction: column; 
+  background-color: #fff;
+}
+.graph-loading { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #14b8a6; background-color: rgba(255,255,255,0.9); z-index: 10; gap: 15px; }
+.chart-container {
+  width: 100%;
+  height: 100%;
+  /* 👇 删掉 min-height，因为父级已经限制了高度，它只需要100%填满即可 */
+  /* 删掉 display: flex, justify-content, align-items */
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background-color: #fafafa;
+  position: absolute; 
+  top: 0;
+  left: 0;
+}
+
+/* 图谱缩放按钮样式 */
+.graph-controls {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+}
+.graph-controls button {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #4b5563;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  transition: all 0.2s;
+}
+.graph-controls button:hover {
+  background: #f0fdfa;
+  border-color: #14b8a6;
+  color: #0f766e;
+}
+
+.graph-placeholder { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #6b7280; gap: 10px; }
 .graph-placeholder h3 { margin: 0; font-size: 16px; color: #4b5563;}
 .graph-placeholder p { margin: 0; font-size: 12px; color: #9ca3af;}
 
-.result-panel { flex: 1.5; overflow-y: auto;}
+.result-panel { 
+  /* 👇 让它自动撑开剩下的高度 */
+  flex: 1; 
+  overflow-y: auto;
+}
 .empty-result { height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #9ca3af; gap: 10px;}
 .empty-result h3 { margin: 0; font-size: 16px; color: #4b5563;}
 .empty-result p { margin: 0; font-size: 12px; color: #9ca3af;}
@@ -266,10 +599,100 @@ const handleSearch = async () => {
 .citations a { color: #14b8a6; text-decoration: none;}
 .citations a:hover { text-decoration: underline;}
 
+/* 一键复制按钮：改成精致的一行小胶囊 */
+.action-buttons {
+  margin-top: 15px;
+  text-align: center;       /* 居中，如果靠右改 right */
+  border-top: 1px dashed #e5e7eb;
+  padding-top: 15px;
+  display: flex;            /* 用 flex 控制对齐 */
+  justify-content: center;  /* 居中，想靠右改 flex-end */
+}
+
+/* 👇 强制覆盖 Element Plus 的默认尺寸 */
+.action-buttons .el-button {
+  height: 28px !important;        /* 定死高度，不让它撑大 */
+  padding: 0 12px !important;     /* 左右留一点空隙即可 */
+  font-size: 12px !important;     /* 字号缩小 */
+  border-radius: 14px !important; /* 胶囊形 */
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* 👇 图标也要跟着变小，并且和文字保持一行 */
+.action-buttons .el-button .el-icon {
+  font-size: 14px !important;
+  margin-right: 4px !important;    /* 图标和文字之间的小间距 */
+  vertical-align: middle !important;
+}
 .footer { background-color: #fef3c7; color: #92400e; padding: 12px; display: flex; justify-content: center; align-items: center; gap: 8px; font-size: 14px; border-top: 1px solid #fde68a;}
 
 @media (max-width: 768px) {
   .main-content { flex-direction: column; }
   .chat-panel, .right-panels { flex: none; height: 500px; }
+}
+
+/* 自定义置信度警告提示 */
+.custom-warning-msg {
+  min-width: 300px !important;
+  max-width: 500px !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  padding: 10px 16px !important;
+  border-radius: 8px !important;
+}
+/* 自定义通知样式 */
+.custom-notification {
+  width: 320px !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+/* 👇 强制把 Element Plus 那个巨大的感叹号压回去 */
+.custom-notification .el-notification__icon {
+  font-size: 24px !important;
+  width: 24px !important;
+  height: 24px !important;
+}
+
+.custom-notification .el-notification__content {
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+.custom-notification .el-notification__title {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+}
+
+/* 👇 AI 推理中的 Loading 气泡样式 */
+.loading-bubble {
+  display: flex;
+  align-items: center;
+  background-color: #f0fdfa !important; /* 浅青色背景 */
+  color: #0f766e !important;
+  padding: 10px 16px !important;
+  font-style: italic;
+}
+
+/* 三个跳动的小点 */
+.loading-bubble .dot {
+  width: 6px;
+  height: 6px;
+  background-color: #14b8a6;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 4px;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.loading-bubble .dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-bubble .dot:nth-child(2) { animation-delay: -0.16s; }
+
+/* 跳动动画 */
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
 }
 </style>
