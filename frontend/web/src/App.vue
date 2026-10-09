@@ -250,7 +250,9 @@ const fetchMockData = async (query, role) => {
     })
     
     return {
-      summary: `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。此结论仅做科普参考。`,
+        summary: role === 'doctor' 
+        ? data.reason 
+        : `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。此结论仅做科普参考。`,
       citations: ['智谱AI GLM-4-Flash 实时生成', '《内科学（第9版）》'],
       confidence: data.confidence,
       graphData: { nodes, links }
