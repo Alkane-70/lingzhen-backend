@@ -43,26 +43,28 @@ async def diagnose(request: QueryRequest):
 
     # 2. 根据角色动态生成 Prompt
     if request.role == "doctor":
-        system_prompt = f"""你是一个专业的临床辅助诊断系统。
-        请根据患者的症状，结合医学文献和知识图谱，给出专业的医疗建议。
-        医学文献参考：{context_str}
-        图谱路径：{graph_str}
+        system_prompt = f"""你是一个专业的临床辅助诊断与医学知识库系统。
+        用户是医生，正在检索药物、临床指南或专业文献。
+        请直接、客观地回答医生的问题，给出专业的医学解释（如药物的适应症、禁忌症、药理作用等）。
+        绝对禁止出现“建议前往某科室就诊”等就医引导语。
+        
+        已知本地参考资料：{context_str}
         
         请严格按照以下JSON格式返回结果：
         {{
-            "department": "相关科室",
+            "department": "如查询药物填'药学咨询'，如查询疾病填对应科室",
             "confidence": 0.95,
-            "reason": "专业医学参考资料摘要，包含鉴别诊断，字数80字以内",
+            "reason": "直接给出专业的医学解答，比如药物的功效、适应症、药理作用等，严禁使用就医建议句式，字数150字以内。",
             "graph_nodes": [
-                {{"name": "查询对象", "type": "drug"}},
-                {{"name": "相关疾病", "type": "disease"}},
-                {{"name": "适应症", "type": "symptom"}},
-                {{"name": "相关科室", "type": "department"}}
+                {{"name": "查询主体（如药物名）", "type": "drug"}},
+                {{"name": "相关疾病或适应症", "type": "disease"}},
+                {{"name": "药理作用或相关症状", "type": "symptom"}},
+                {{"name": "相关科室（如药学咨询）", "type": "department"}}
             ]
         }}
         注意：
-        1. type 只能是 symptom(症状), disease(疾病), department(科室), drug(药物/文献) 这四种。
-        2. 如果用户问的是药物，请把药物作为 "drug" 类型。
+        1. type 只能是 symptom, disease, department, drug 这四种。
+        2. **图谱节点的顺序必须能构成一条完整的逻辑链！** 例如："药物" -> "主治疾病" -> "症状" -> "科室"，这样前端才能画出连线。
         3. 只返回JSON，绝对不要有任何其他解释文字。"""
     else:
         system_prompt = f"""你是一个专业的医疗分诊助手。请根据用户的症状，进行医学推理。
