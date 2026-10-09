@@ -25,11 +25,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from typing import List, Dict
+
 class QueryRequest(BaseModel):
     symptom: str
     role: str = "patient"
     age: str = "25岁"
     gender: str = "男"
+    # 新增：用来接收前端传来的历史对话记录，初始为空列表
+    history: List[Dict[str, str]] = []
+    # 新增：用来区分是不是同一轮问诊
+    session_id: str = "default_session"
 
 @app.post("/api/diagnose")
 async def diagnose(request: QueryRequest):
@@ -40,6 +46,9 @@ async def diagnose(request: QueryRequest):
     context_str = "\n".join(contexts)
     graph_nodes_local = get_graph_path(symptom)
     graph_str = " -> ".join([node["name"] for node in graph_nodes_local])
+
+    turn_count = len(request.history) // 2
+
 
     # 2. 根据角色动态生成 Prompt
     if request.role == "doctor":
@@ -66,58 +75,88 @@ async def diagnose(request: QueryRequest):
         2. 图谱节点的顺序必须能构成一条完整的逻辑链！例如："药物" -> "主治疾病" -> "症状"。
         3. 只返回JSON，绝对不要有任何其他解释文字。"""
     else:
-        system_prompt = f"""你是一个专业的医疗分诊助手。请根据用户的症状，进行医学推理。
+        system_prompt = f"""你是一个专业的医疗分诊助手。当前是第 {turn_count} 轮对话。
         医学文献参考：{context_str}
         图谱路径：{graph_str}
         
-        请严格按照以下JSON格式返回结果：
+        你的任务：
+        1. 判断信息是否充足。如果不足，且未超过3轮，必须进行追问（一次问1-2个问题），不要直接给结论。
+        2. 如果信息充足，或当前是第 2 轮及以上的对话，必须立刻给出最终分诊结论，绝对不能再追问！
+        3. 必须进行“大病小病区分”。小病给出非处方药建议，大病发出急诊警告。
+        
+        请严格按以下JSON格式返回：
         {{
-            "department": "建议就诊科室",
+            "is_follow_up": true/false,  // true表示这一轮是追问，false表示最终结论
+            "follow_up_question": "如果是追问，这里写你要问的问题；否则为空字符串",
+            "department": "最终结论时的建议科室",
+            "severity": "mild 或 severe", // 小病填mild，大病填severe
+            "reason": "分诊理由或健康建议。小病可以推荐药店能买到的非处方药，大病必须提醒立刻去医院。",
             "confidence": 0.92,
-            "reason": "分诊理由，字数50字以内",
             "graph_nodes": [
                 {{"name": "症状1", "type": "symptom"}},
-                {{"name": "症状2", "type": "symptom"}},
-                {{"name": "推断出的疾病1", "type": "disease"}},
+                {{"name": "推断疾病", "type": "disease"}},
                 {{"name": "科室", "type": "department"}}
             ]
         }}
-        注意：
-        1. 你必须根据症状，主动推断出 1-2 个最可能的疾病，并将症状拆分（如头晕、恶心分开），以 "symptom" 和 "disease" 类型放入 graph_nodes。
-        2. department 节点必须和上面 department 字段完全一致。
-        3. 只返回JSON，绝对不要有任何其他解释文字。
-        4. confidence 必须是一个0到1之间的小数。"""
+        注意：只返回JSON，不能有其他文字。confidence 必须在0到1之间。"""
     
+
     try:
-        # 3. 调大模型生成
+        # 1. 先组装好给大模型的完整 messages 列表
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # 把前端传来的历史对话记录加入进去
+        for msg in request.history:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+            
+        # 最后加上当前这一轮用户的输入
+        messages.append({"role": "user", "content": symptom})
+
+        # 2. 再调用大模型（注意这里没有嵌套重复！）
         response = client.chat.completions.create(
             model="glm-4-flash",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": symptom}
-            ],
+            messages=messages,  # 传入组装好的完整历史
             response_format={"type": "json_object"}
         )
         
+        # 3. 解析大模型返回的数据
         result_dict = json.loads(response.choices[0].message.content)
+
+        # === 新增：强制截断逻辑（防止大模型无限追问） ===
+        # turn_count 为 0 是第一轮，1 是第二轮，2 是第三轮
+        if turn_count >= 2:
+            result_dict["is_follow_up"] = False  # 强制结束追问
+            # 如果大模型忘了填科室或严重程度，给他兜底
+            if not result_dict.get("department") or result_dict.get("department") == "":
+                result_dict["department"] = "全科门诊"
+            if not result_dict.get("severity") or result_dict.get("severity") == "":
+                result_dict["severity"] = "mild"
+            if not result_dict.get("reason") or result_dict.get("reason") == "":
+                result_dict["reason"] = "基于现有症状的综合建议，请注意休息，若症状加重请及时就医。"
+        # ==============================================
         
-        # 4. 存入 SQLite 数据库
+        # 4. 存入 SQLite 数据库（注意：这里也去掉了重复的create代码）
         db = SessionLocal()
         try:
             record = DiagnosisRecord(
                 symptom=symptom,
                 department=result_dict.get("department", "综合科"),
                 confidence=result_dict.get("confidence", 0.9),
-                reason=result_dict.get("reason", "")
+                reason=result_dict.get("reason", ""),
+                session_id=request.session_id,
+                severity=result_dict.get("severity", "mild")
             )
             db.add(record)
             db.commit()
         finally:
             db.close()
 
-        # 5. 返回结果给前端
+        # 5. 返回结果给前端（把新字段也返回给前端）
         return {
+            "is_follow_up": result_dict.get("is_follow_up", False),
+            "follow_up_question": result_dict.get("follow_up_question", ""),
             "department": result_dict.get("department", "综合科"),
+            "severity": result_dict.get("severity", "mild"),
             "confidence": result_dict.get("confidence", 0.9),
             "reason": result_dict.get("reason", ""),
             "graph_nodes": result_dict.get("graph_nodes", [])

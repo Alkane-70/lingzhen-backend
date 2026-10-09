@@ -18,6 +18,8 @@ class DiagnosisRecord(Base):
     department = Column(String)
     confidence = Column(Float)
     reason = Column(String)
+    session_id = Column(String, default="default")  # 会话ID，用来关联多轮对话
+    severity = Column(String, default="mild")
 
 # 自动创建表
 Base.metadata.create_all(bind=engine)
