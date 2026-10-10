@@ -140,29 +140,28 @@ async def diagnose(request: QueryRequest):
         3. 只返回JSON，绝对不要有任何其他解释文字。"""
     else:
         system_prompt = f"""你是一个专业的医疗分诊助手。当前是第 {turn_count} 轮对话。
+        【绝对红线】你的输出必须是且只能是一个合法的 JSON 对象！绝对不能直接输出纯文本！
+        
         医学文献参考：{context_str}
         图谱路径：{graph_str}
         
         你的任务：
-        1. 判断信息是否充足。如果不足，且未超过3轮，必须进行追问（一次问1-2个问题），不要直接给结论。
-        2. 如果信息充足，或当前是第 2 轮及以上的对话，必须立刻给出最终分诊结论，绝对不能再追问！
-        3. 必须进行“大病小病区分”。小病给出非处方药建议，大病发出急诊警告。
+        1. 判断信息是否充足。如果不足，且未超过3轮，必须进行追问。
+        2. 除非用户已经连续回答了你至少 2 次追问（当前对话轮数 >= 2），否则绝对不准给出最终结论，必须继续追问。
+        3. 如果信息充足，或已达到3轮，请给出最终分诊结论。
+        4. 必须进行“大病小病区分”：小病推荐非处方药，大病警告去医院。
         
         请严格按以下JSON格式返回：
         {{
-            "is_follow_up": true/false,  // true表示这一轮是追问，false表示最终结论
+            "is_follow_up": true/false,
             "follow_up_question": "如果是追问，这里写你要问的问题；否则为空字符串",
             "department": "最终结论时的建议科室",
-            "severity": "mild 或 severe", // 小病填mild，大病填severe
-            "reason": "分诊理由或健康建议。小病可以推荐药店能买到的非处方药，大病必须提醒立刻去医院。",
+            "severity": "mild 或 severe",
+            "reason": "最终结论时的详细理由。追问阶段必须是空字符串''",
             "confidence": 0.92,
-            "graph_nodes": [
-                {{"name": "症状1", "type": "symptom"}},
-                {{"name": "推断疾病", "type": "disease"}},
-                {{"name": "科室", "type": "department"}}
-            ]
+            "graph_nodes": []
         }}
-        注意：只返回JSON，不能有其他文字。confidence 必须在0到1之间。"""
+        再次强调：如果你是在追问（is_follow_up 为 true），graph_nodes 必须是空数组 []，department 和 severity 必须是空字符串 ""。只返回JSON，绝对不要有任何其他文字！"""
     
 
     try:
@@ -184,7 +183,39 @@ async def diagnose(request: QueryRequest):
         )
         
         # 3. 解析大模型返回的数据
-        result_dict = json.loads(response.choices[0].message.content)
+        # 健壮的 JSON 解析
+        content = response.choices[0].message.content
+        
+        # 尝试提取大模型内容中的 JSON 部分
+        try:
+            # 尝试提取大括号里的内容
+            import re
+            match = re.search(r'\{.*\}', content, re.DOTALL)
+            if match:
+                result_dict = json.loads(match.group())
+            else:
+                # 如果大模型没给大括号，直接把它的纯文本包装成一次“追问”
+                print(f"警告：大模型返回纯文本，进行智能包装: {content}")
+                result_dict = {
+                    "is_follow_up": True,
+                    "follow_up_question": content.strip(), # 把它的纯文本作为追问问题
+                    "department": "",
+                    "severity": "",
+                    "reason": "",
+                    "confidence": 0.5,
+                    "graph_nodes": []
+                }
+        except Exception as e:
+            print(f"JSON解析彻底失败: {e}")
+            result_dict = {
+                "is_follow_up": True,
+                "follow_up_question": "抱歉，系统暂时无法解析您的症状，请换一种描述方式，或重新发起问诊。",
+                "department": "",
+                "severity": "",
+                "reason": "",
+                "confidence": 0.5,
+                "graph_nodes": []
+            }
 
         # === 新增：强制截断逻辑（防止大模型无限追问） ===
         # turn_count 为 0 是第一轮，1 是第二轮，2 是第三轮
@@ -230,8 +261,10 @@ async def diagnose(request: QueryRequest):
     except Exception as e:
         print(f"API报错: {e}")
         return {
+            "is_error": True,  # 明确告诉前端这是错误，不是正常追问
+            "is_follow_up": False,
             "department": "系统错误",
             "confidence": 0.5,
-            "reason": f"后端服务繁忙，请稍后再试。",
+            "reason": "后端服务繁忙，请稍后再试。",
             "graph_nodes": [{"name": symptom, "type": "symptom"}]
         }
