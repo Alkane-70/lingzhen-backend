@@ -215,16 +215,24 @@ const fetchMockData = async (query, role) => {
     // 3. 不是追问，就是最终结论
     isFollowUp.value = false
     
-    //  直接根据后端返回的 type 来染色
-        const nodes = data.graph_nodes.map((node) => {
-      let category = 0 // 症状（黄）
-      if (node.type === 'department') category = 2 // 科室（蓝）
-      if (node.type === 'disease') category = 1 // 疾病（红）
-      if (node.type === 'drug') category = 3 // 👈 新增：药物（绿）
+      //  直接根据后端返回的 type 来染色（医生模式过滤科室，患者模式保留）
+      const nodes = data.graph_nodes
+      .filter(node => {
+        // 医生模式下，过滤掉 department 节点；患者模式保留
+        if (currentRole.value === 'doctor' && node.type === 'department') {
+          return false
+        }
+        return true
+      })
+      .map((node) => {
+        let category = 0 // 症状（黄）
+        if (node.type === 'department') category = 2 // 科室（蓝）
+        if (node.type === 'disease') category = 1    // 疾病（红）
+        if (node.type === 'drug') category = 3       // 药物（绿）
 
-      const size = node.type === 'department' ? 60 : 50
-      return { name: node.name, category: category, symbolSize: size }
-    })
+        const size = node.type === 'department' ? 60 : 50
+        return { name: node.name, category: category, symbolSize: size }
+      })
     
     //  智能生成连线：症状 -> 疾病 -> 科室
        const links = []
@@ -371,11 +379,14 @@ const renderGraph = (graphData) => {
   }
   myChart = echarts.init(chartRef.value)
 
-    const categories = [
+  // 患者模式才显示“科室”图例，医生模式隐藏
+  const categories = [
     { name: '症状', itemStyle: { color: '#f59e0b' } },
     { name: '疾病/建议', itemStyle: { color: '#ef4444' } },
-    { name: '科室', itemStyle: { color: '#3b82f6' } },
-    { name: '药物/文献', itemStyle: { color: '#10b981' } } // 👈 新增：绿色
+    ...(currentRole.value === 'patient' 
+      ? [{ name: '科室', itemStyle: { color: '#3b82f6' } }] 
+      : []),
+    { name: '药物/文献', itemStyle: { color: '#10b981' } }
   ]
 
   const option = {
