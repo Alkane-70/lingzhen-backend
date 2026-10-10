@@ -187,6 +187,8 @@ const isLoading = ref(false)
 const isGraphLoading = ref(false)
 const chatHistory = ref([])
 const searchResult = ref(null)
+const isFollowUp = ref(false)
+const sessionId = ref(Date.now().toString())
 
 // ECharts 相关
 const chartRef = ref(null)
@@ -196,18 +198,30 @@ let myChart = null
 // 调用你本地的真实 Python 服务器（不再是 Mock 了）
 const fetchMockData = async (query, role) => {
   try {
+        // 1. 发起请求（带上 history 和 session_id）
     const response = await axios.post('http://127.0.0.1:8000/api/diagnose', {
       symptom: query,
-      role: role,   // 👈 新增：告诉后端我是医生还是患者
-      age: "25岁",
-      gender: "男"
-    },
-    {
-        timeout: 15000  // 👈 新增：设置 15 秒超时，防止大模型还没生成完就断开
-    }
-  )
-    
+      role: role,
+      history: chatHistory.value.map(msg => ({
+        role: msg.role === 'ai' ? 'assistant' : 'user',
+        content: msg.content
+      })),
+      session_id: sessionId.value,
+      user_id: 1,  // 👈 新增：比赛 Demo 阶段默认用 id=1
+    }, {
+      timeout: 20000 // 多轮对话耗时稍长，改成20秒
+    })
+
     const data = response.data
+
+    // 2. 👇 关键：如果是追问，立刻返回，不画图谱！
+    if (data.is_follow_up) {
+      isFollowUp.value = true
+      return { isFollowUp: true, followUpQuestion: data.follow_up_question }
+    }
+
+    // 3. 不是追问，就是最终结论
+    isFollowUp.value = false
     
     //  直接根据后端返回的 type 来染色
         const nodes = data.graph_nodes.map((node) => {
@@ -255,6 +269,8 @@ const fetchMockData = async (query, role) => {
         : `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。此结论仅做科普参考。`,
       citations: ['智谱AI GLM-4-Flash 实时生成', '《内科学（第9版）》'],
       confidence: data.confidence,
+      severity: data.severity,       
+      department: data.department,   
       graphData: { nodes, links }
     }
   } catch (error) {
@@ -291,7 +307,16 @@ const handleSearch = async () => {
   }
   
   const data = await fetchMockData(userMessage, currentRole.value)
-  
+    // 如果是追问，立刻结束，不画图
+  if (data.isFollowUp) {
+    isLoading.value = false
+    isGraphLoading.value = false
+    chatHistory.value.push({ role: 'ai', content: data.followUpQuestion })
+    queryInput.value = ''
+    return
+  }
+
+
   // 新增：置信度判断逻辑（放在 data 获取之后,改成轻量级顶部提示，不遮挡画面,改成右上角悬浮通知，永不自动消失）
   const confidence = (data.confidence || 0.9) * 100
   if (confidence < 80) {
@@ -304,6 +329,28 @@ const handleSearch = async () => {
       showClose: true, // 显示关闭按钮
       customClass: 'custom-notification' // 自定义样式
     })
+  }
+
+
+    // 👇 大病小病预警（队长要求：必须加 !data.isFollowUp 判断，防止追问阶段弹 undefined）
+  if (!data.isFollowUp) { 
+    if (data.severity === 'severe') {
+      ElNotification({
+        title: '⚠️ 重症预警，请立即就医！',
+        message: `建议立即前往【${data.department}】急诊！理由：${data.reason}`,
+        type: 'error',
+        duration: 0,
+        position: 'top-right'
+      })
+    } else if (data.severity === 'mild') {
+      ElNotification({
+        title: '健康建议（轻症）',
+        message: `建议参考用药：${data.reason}。若症状加重请及时就医。`,
+        type: 'success',
+        duration: 5000,
+        position: 'top-right'
+      })
+    }
   }
 
   searchResult.value = data
