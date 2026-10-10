@@ -9,7 +9,7 @@ from pydantic import BaseModel
 # 导入RAG、图谱和数据库模块
 from backend.rag_service import search_medical_context
 from backend.graph_service import get_graph_path
-from backend.database import SessionLocal, DiagnosisRecord
+from backend.database import SessionLocal, DiagnosisRecord,User
 
 load_dotenv(find_dotenv())
 api_key = os.getenv("ZHIPU_API_KEY")
@@ -36,7 +36,71 @@ class QueryRequest(BaseModel):
     history: List[Dict[str, str]] = []
     # 新增：用来区分是不是同一轮问诊
     session_id: str = "default_session"
+    user_id: int = 1
 
+class AuthRequest(BaseModel):
+    username: str
+    password: str
+
+
+#注册接口
+@app.post("/api/register")
+async def register(req: AuthRequest):
+    db = SessionLocal()
+    try:
+        # 检查用户名是否已存在
+        if db.query(User).filter(User.username == req.username).first():
+            return {"code": 400, "msg": "用户名已存在"}
+        # 创建新用户（比赛Demo，密码暂存明文即可）
+        user = User(username=req.username, password=req.password)
+        db.add(user)
+        db.commit()
+        return {"code": 200, "msg": "注册成功", "user_id": user.id}
+    finally:
+        db.close()
+
+
+#登录接口
+@app.post("/api/login")
+async def login(req: AuthRequest):
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(
+            User.username == req.username, 
+            User.password == req.password
+        ).first()
+        if user:
+            return {"code": 200, "msg": "登录成功", "user_id": user.id, "username": user.username}
+        return {"code": 400, "msg": "账号或密码错误"}
+    finally:
+        db.close()
+
+
+#历史记录查询接口
+@app.get("/api/history/{user_id}")
+async def get_history(user_id: int):
+    db = SessionLocal()
+    try:
+        # 按时间倒序查询该用户的所有记录
+        records = db.query(DiagnosisRecord).filter(
+            DiagnosisRecord.user_id == user_id
+        ).order_by(DiagnosisRecord.id.desc()).all()
+        
+        return [
+            {
+                "id": r.id,
+                "symptom": r.symptom,
+                "department": r.department,
+                "severity": r.severity,
+                "confidence": r.confidence,
+                "reason": r.reason
+            } for r in records
+        ]
+    finally:
+        db.close()
+
+
+#问诊接口
 @app.post("/api/diagnose")
 async def diagnose(request: QueryRequest):
     symptom = request.symptom
@@ -139,6 +203,7 @@ async def diagnose(request: QueryRequest):
         db = SessionLocal()
         try:
             record = DiagnosisRecord(
+                user_id=request.user_id,
                 symptom=symptom,
                 department=result_dict.get("department", "综合科"),
                 confidence=result_dict.get("confidence", 0.9),
