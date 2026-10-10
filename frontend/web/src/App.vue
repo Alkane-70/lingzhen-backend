@@ -50,14 +50,6 @@
             <h3>输入您想查询的医学问题</h3>
             <p>系统将从知识库中检索相关资料</p>
             
-            <div class="quick-examples">
-              <div class="example-item" @click="queryInput = '高血压日常饮食要注意什么？'; handleSearch()">
-                高血压日常饮食要注意什么？
-              </div>
-              <div class="example-item" @click="queryInput = '感冒发烧什么时候需要去医院？'; handleSearch()">
-                感冒发烧什么时候需要去医院？
-              </div>
-            </div>
           </div>
 
           <!-- 历史对话区 -->
