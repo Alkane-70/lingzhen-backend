@@ -313,6 +313,7 @@ const handleSearch = async () => {
   }
   
   const data = await fetchMockData(userMessage, currentRole.value)
+  console.log('📝 当前 chatHistory:', JSON.parse(JSON.stringify(chatHistory.value)))
     // 如果是追问，立刻结束，不画图
     // 🚨 1. 拦截“后端报错”（解决强行画图问题）
   if (data.department === '系统错误' || data.confidence === 0.5) {
@@ -354,12 +355,17 @@ const handleSearch = async () => {
   }
 
 
-    // 👇 大病小病预警（队长要求：必须加 !data.isFollowUp 判断，防止追问阶段弹 undefined）
-  if (!data.isFollowUp) { 
+  // 👇 大病小病预警（队长要求：必须加 !data.isFollowUp 判断，防止追问阶段弹 undefined）
+  // 👇 大病小病预警（加空值兜底，防止 undefined）
+  if (!data.isFollowUp) {
+    // 👇 关键：兜底处理空值，防止弹窗显示 undefined
+    const dept = data.department || '全科门诊'
+    const reason = data.reason || '请注意休息，若症状加重请及时就医。'
+    
     if (data.severity === 'severe') {
       ElNotification({
         title: '⚠️ 重症预警，请立即就医！',
-        message: `建议立即前往【${data.department}】急诊！理由：${data.reason}`,
+        message: `建议立即前往【${dept}】急诊！理由：${reason}`,
         type: 'error',
         duration: 0,
         position: 'top-right'
@@ -367,7 +373,7 @@ const handleSearch = async () => {
     } else if (data.severity === 'mild') {
       ElNotification({
         title: '健康建议（轻症）',
-        message: `建议参考用药：${data.reason}。若症状加重请及时就医。`,
+        message: `建议参考用药：${reason}。若症状加重请及时就医。`,
         type: 'success',
         duration: 5000,
         position: 'top-right'
