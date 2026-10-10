@@ -209,7 +209,12 @@ const fetchMockData = async (query, role) => {
     // 2. 👇 关键：如果是追问，立刻返回，不画图谱！
     if (data.is_follow_up) {
       isFollowUp.value = true
-      return { isFollowUp: true, followUpQuestion: data.follow_up_question }
+      // 👇 追问阶段强制返回空图谱数据，防止任何残留
+      return { 
+        isFollowUp: true, 
+        followUpQuestion: data.follow_up_question,
+        graphData: { nodes: [], links: [] }  // 空图谱
+      }
     }
 
     // 3. 不是追问，就是最终结论
@@ -273,14 +278,15 @@ const fetchMockData = async (query, role) => {
       department: data.department,   
       graphData: { nodes, links }
     }
-  } catch (error) {
+   } catch (error) {
     console.error('联调失败:', error)
     ElMessage.error('后端接口调用失败，请检查 Python 服务是否启动')
     return {
-      summary: '网络异常，请检查后端服务是否启动。',
+      department: '系统错误',
+      confidence: 0.5, // 👈 让前端拦截逻辑识别出这是错误兜底
+      summary: '',
       citations: [],
-      confidence: 0.5,
-      graphData: { nodes: [{ name: '接口错误', category: 1, symbolSize: 60 }], links: [] }
+      graphData: { nodes: [], links: [] } // 👈 强制返回空图谱，不画孤立节点
     }
   }
 }
@@ -308,21 +314,30 @@ const handleSearch = async () => {
   
   const data = await fetchMockData(userMessage, currentRole.value)
     // 如果是追问，立刻结束，不画图
-  if (data.isFollowUp) {
-    isLoading.value = false
-    isGraphLoading.value = false
-    chatHistory.value.push({ role: 'ai', content: data.followUpQuestion })
-    queryInput.value = ''
-    return
-  }
-    // 👇 新增：拦截后端“系统错误”的兜底数据，不画图，不弹窗，只提示重试
+    // 🚨 1. 拦截“后端报错”（解决强行画图问题）
   if (data.department === '系统错误' || data.confidence === 0.5) {
-    isLoading.value = false
+    isFollowUp.value = false
     isGraphLoading.value = false
-    searchResult.value = null // 清空结果区，避免残留
+    isLoading.value = false
+    searchResult.value = null // 清空结论区
+    // 👇 核心修复：彻底销毁图表，不留旧图数据
+    if (myChart) { myChart.dispose(); myChart = null }
     chatHistory.value.push({ role: 'ai', content: '抱歉，AI 医生正忙，请您稍后再试一次。' })
     queryInput.value = ''
-    return // 🚨 关键：直接结束，绝对不能让代码往下走，否则图谱会乱画！
+    return // 🚨 关键：直接结束，不往下走！
+  }
+
+  // 🚨 2. 拦截“追问状态”（解决追问却画孤立节点的问题）
+  if (data.isFollowUp) {
+    isFollowUp.value = true
+    isGraphLoading.value = false
+    isLoading.value = false
+    searchResult.value = null // 清空结论区
+    // 👇 核心修复：彻底销毁图表，绝对不画图
+    if (myChart) { myChart.dispose(); myChart = null }
+    chatHistory.value.push({ role: 'ai', content: data.followUpQuestion })
+    queryInput.value = ''
+    return // 🚨 关键：直接结束，不往下走！
   }
   // 新增：置信度判断逻辑（放在 data 获取之后,改成轻量级顶部提示，不遮挡画面,改成右上角悬浮通知，永不自动消失）
   const confidence = (data.confidence || 0.9) * 100
@@ -367,13 +382,20 @@ const handleSearch = async () => {
   nextTick(() => {
     setTimeout(() => {
       isGraphLoading.value = false
-      renderGraph(data.graphData)
-    }, 800) // 模拟科技感的渲染延迟
+      // 🚨 核心修复：只有数据合法且有节点时才画图！
+      if (data.graphData && data.graphData.nodes && data.graphData.nodes.length > 0) {
+        renderGraph(data.graphData)
+      }
+    }, 800)
   })
   
-  chatHistory.value.push({ role: 'ai', content: '已为您检索到相关资料，请查看右侧结论。' })
+  // 👇 把写死的假回复换成基于真实数据的结论（后端要求）
+  const aiReply = currentRole.value === 'doctor' 
+    ? data.reason 
+    : `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。`
+  chatHistory.value.push({ role: 'ai', content: aiReply })
   queryInput.value = '' 
-}
+} // 🚨 这里补上缺失的大括号！闭合 handleSearch 函数
 
 // 渲染 ECharts 图谱
 // 渲染 ECharts 图谱（最终修复版）
