@@ -315,8 +315,15 @@ const handleSearch = async () => {
     queryInput.value = ''
     return
   }
-
-
+    // 👇 新增：拦截后端“系统错误”的兜底数据，不画图，不弹窗，只提示重试
+  if (data.department === '系统错误' || data.confidence === 0.5) {
+    isLoading.value = false
+    isGraphLoading.value = false
+    searchResult.value = null // 清空结果区，避免残留
+    chatHistory.value.push({ role: 'ai', content: '抱歉，AI 医生正忙，请您稍后再试一次。' })
+    queryInput.value = ''
+    return // 🚨 关键：直接结束，绝对不能让代码往下走，否则图谱会乱画！
+  }
   // 新增：置信度判断逻辑（放在 data 获取之后,改成轻量级顶部提示，不遮挡画面,改成右上角悬浮通知，永不自动消失）
   const confidence = (data.confidence || 0.9) * 100
   if (confidence < 80) {
