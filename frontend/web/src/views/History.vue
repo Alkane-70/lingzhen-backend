@@ -83,6 +83,19 @@ onMounted(async () => {
       record.department && record.department !== '综合科' &&
       record.confidence && record.confidence >= 0.6
     )
+    
+    // 👇 关键修复：把 chat_history 从 JSON 字符串解析成数组
+    records.value.forEach(record => {
+      if (typeof record.chat_history === 'string') {
+        try {
+          record.chat_history = JSON.parse(record.chat_history)
+        } catch (e) {
+          console.error('解析 chat_history 失败:', e)
+          record.chat_history = []
+        }
+      }
+    })
+    
     console.log('📚 历史记录:', records.value)
   } catch (e) {
     console.error(e)
