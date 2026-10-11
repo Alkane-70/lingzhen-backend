@@ -1,20 +1,47 @@
 <template>
   <div class="app-wrapper">
     <!-- 顶部 Header -->
-    <header class="header">
-      <div class="header-left">
-        <div class="logo-icon">
-          <el-icon :size="24" color="#fff"><FirstAidKit /></el-icon>
+        <!-- 登录页（未登录时显示） -->
+    <Login v-if="!isLoggedIn" @login-success="handleLoginSuccess" />
+
+    <!-- 登录后显示主界面 -->
+    <template v-else>
+      <!-- 顶部导航栏 -->
+      <header class="header">
+        <div class="header-left">
+          <div class="logo-icon">
+            <el-icon :size="24" color="#fff"><FirstAidKit /></el-icon>
+          </div>
+          <div class="header-title">
+            <h1>医疗知识库检索系统</h1>
+            <p>基于循证医学资料的智能检索</p>
+          </div>
         </div>
-        <div class="header-title">
-          <h1>医疗知识库检索系统</h1>
-          <p>基于循证医学资料的智能检索</p>
+        <div class="header-nav">
+          <el-button 
+            :type="currentPage === 'chat' ? 'primary' : 'default'"
+            @click="currentPage = 'chat'"
+          >
+            💬 智能问诊
+          </el-button>
+          <el-button 
+            :type="currentPage === 'history' ? 'primary' : 'default'"
+            @click="currentPage = 'history'"
+          >
+            📋 我的档案
+          </el-button>
+          <span class="username">👤 {{ username }}</span>
+          <el-button type="danger" plain @click="handleLogout">
+            退出登录
+          </el-button>
         </div>
-      </div>
-    </header>
+      </header>
+
+      <!-- 主内容区：切换问诊页和历史页 -->
+      <History v-if="currentPage === 'history'" />
 
     <!-- 主体内容区 -->
-    <main class="main-content">
+    <main v-else class="main-content">
       <!-- 左侧聊天面板 -->
       <div class="panel chat-panel">
         <div class="panel-header">
@@ -163,6 +190,7 @@
       <el-icon><Warning /></el-icon>
       <span>本系统仅为健康科普/资料查阅辅助工具，不替代执业医师诊断</span>
     </footer>
+    </template>
   </div>
 </template>
 
@@ -172,6 +200,28 @@ import { ref, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import * as echarts from 'echarts'
 import { FirstAidKit, User, UserFilled, Document, Promotion, Share, Search, Warning, Loading, CopyDocument } from '@element-plus/icons-vue'
+import Login from './views/Login.vue'
+import History from './views/History.vue'
+
+// 👇 用户体系状态
+const isLoggedIn = ref(!!localStorage.getItem('user_id'))
+const username = ref(localStorage.getItem('username') || '')
+const currentPage = ref('chat')
+
+const handleLoginSuccess = () => {
+  isLoggedIn.value = true
+  username.value = localStorage.getItem('username')
+  currentPage.value = 'chat'
+}
+
+const handleLogout = () => {
+  localStorage.removeItem('user_id')
+  localStorage.removeItem('username')
+  isLoggedIn.value = false
+  username.value = ''
+  currentPage.value = 'chat'
+  ElMessage.success('已退出登录')
+}
 
 const currentRole = ref('patient')
 const queryInput = ref('')
@@ -199,7 +249,7 @@ const fetchMockData = async (query, role) => {
         content: msg.content
       })),
       session_id: sessionId.value,
-      user_id: 1,  // 👈 新增：比赛 Demo 阶段默认用 id=1
+      user_id: Number(localStorage.getItem('user_id') || 1),
     }, {
       timeout: 20000 // 多轮对话耗时稍长，改成20秒
     })
