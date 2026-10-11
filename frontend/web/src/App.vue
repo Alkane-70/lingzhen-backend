@@ -30,10 +30,22 @@
           >
             📋 我的档案
           </el-button>
-          <span class="username">👤 {{ username }}</span>
-          <el-button type="danger" plain @click="handleLogout">
-            退出登录
-          </el-button>
+
+          <!-- 👇 已登录 -->
+          <template v-if="!isGuest">
+            <span class="username">👤 {{ username }}</span>
+            <el-button type="danger" plain @click="handleLogout">
+              退出登录
+            </el-button>
+          </template>
+
+          <!-- 👇 游客 -->
+          <template v-else>
+            <span class="username" style="color: #9ca3af;">👤 游客模式</span>
+            <el-button type="primary" color="#14b8a6" @click="showLoginDialog = true">
+              登录 / 注册
+            </el-button>
+          </template>
         </div>
       </header>
 
@@ -194,6 +206,10 @@
       <el-icon><Warning /></el-icon>
       <span>本系统仅为健康科普/资料查阅辅助工具，不替代执业医师诊断</span>
     </footer>
+    <!-- 👇 游客点击"登录/注册"时弹出的对话框 -->
+    <el-dialog v-model="showLoginDialog" width="420px" :show-close="true" append-to-body>
+      <Login @login-success="handleLoginSuccess" />
+    </el-dialog>
     </template>
   </div>
 </template>
@@ -208,23 +224,28 @@ import Login from './views/Login.vue'
 import History from './views/History.vue'
 
 // 👇 用户体系状态
-const isLoggedIn = ref(!!localStorage.getItem('user_id'))
+const isLoggedIn = ref(true) // 👈 默认显示主界面
+const isGuest = ref(!localStorage.getItem('user_id')) // 👈 判断是否游客
+const showLoginDialog = ref(false) // 👈 控制登录弹窗
 const username = ref(localStorage.getItem('username') || '')
 const currentPage = ref('chat')
 
 const handleLoginSuccess = () => {
   isLoggedIn.value = true
+  isGuest.value = false
   username.value = localStorage.getItem('username')
   currentPage.value = 'chat'
+  showLoginDialog.value = false
 }
 
 const handleLogout = () => {
   localStorage.removeItem('user_id')
   localStorage.removeItem('username')
-  isLoggedIn.value = false
+  isLoggedIn.value = true // 👈 不跳登录页，直接变游客
+  isGuest.value = true
   username.value = ''
   currentPage.value = 'chat'
-  ElMessage.success('已退出登录')
+  ElMessage.success('已退出登录，当前以游客身份使用')
 }
 
 // 👇 开始新一轮问诊：重置所有状态
@@ -266,7 +287,7 @@ const fetchMockData = async (query, role) => {
         content: msg.content
       })),
       session_id: sessionId.value,
-      user_id: Number(localStorage.getItem('user_id') || 1),
+      user_id: Number(localStorage.getItem('user_id') || 0),
     }, {
       timeout: 20000 // 多轮对话耗时稍长，改成20秒
     })
@@ -654,7 +675,25 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .app-wrapper { display: flex; flex-direction: column; height: 100vh; width: 100vw; background-color: #f8fafc; font-family: sans-serif; margin: 0; padding: 0; box-sizing: border-box;}
-.header { background-color: #fff; padding: 16px 24px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center;}
+.header { 
+  background-color: #fff; 
+  padding: 16px 24px; 
+  border-bottom: 1px solid #e5e7eb; 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center;
+}
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.header-nav .username {
+  font-size: 14px;
+  color: #0d9488;
+  font-weight: 600;
+  margin: 0 8px;
+}
 .header-left { display: flex; align-items: center; gap: 12px;}
 .logo-icon { background-color: #14b8a6; width: 40px; height: 40px; border-radius: 8px; display: flex; justify-content: center; align-items: center;}
 .header-title h1 { font-size: 20px; margin: 0; color: #1f2937;}

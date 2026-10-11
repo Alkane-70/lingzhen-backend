@@ -51,7 +51,12 @@ onMounted(async () => {
   }
   try {
     const res = await axios.get(`http://127.0.0.1:8000/api/history/${userId}`)
-    records.value = res.data
+    // 👇 只保留最终结论（有明确科室和理由），过滤掉中间追问记录
+    records.value = res.data.filter(record => 
+      record.reason && record.reason.trim() !== '' && 
+      record.department && record.department !== '综合科' &&
+      record.confidence && record.confidence >= 0.6
+    )
     console.log('📚 历史记录:', records.value)
   } catch (e) {
     console.error(e)

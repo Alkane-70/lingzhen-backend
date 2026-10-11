@@ -105,12 +105,12 @@ const handleRegister = async () => {
 
 <style scoped>
 .login-wrapper {
-  height: 100vh;
-  width: 100vw;
+  width: 100%;
+  padding: 10px 0;
   display: flex;
   justify-content: center;
   align-items: center;
-  background: linear-gradient(135deg, #ccfbf1 0%, #f0fdfa 100%);
+  background: transparent;
 }
 .login-box {
   width: 420px;
