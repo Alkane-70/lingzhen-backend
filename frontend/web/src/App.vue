@@ -120,11 +120,22 @@
             class="custom-textarea"
             @keyup.enter="handleSearch"
           ></textarea>
-          <div class="input-footer">
+                    <div class="input-footer">
             <span class="input-tip">Enter 发送, Shift + Enter 换行</span>
-            <el-button type="primary" color="#14b8a6" :loading="isLoading" @click="handleSearch">
-              <el-icon><Promotion /></el-icon> {{ isLoading ? 'AI 正在深度思考中...' : '发送' }}
-            </el-button>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <!-- 👇 开始新的问诊按钮（放在发送键左边） -->
+              <el-button 
+                v-if="searchResult"
+                type="primary" 
+                color="#14b8a6" 
+                @click="startNewSession"
+              >
+                🆕 开始新的问诊
+              </el-button>
+              <el-button type="primary" color="#14b8a6" :loading="isLoading" @click="handleSearch">
+                <el-icon><Promotion /></el-icon> {{ isLoading ? 'AI 正在深度思考中...' : '发送' }}
+              </el-button>
+            </div>
           </div>
         </div>
       </div>
@@ -184,17 +195,6 @@
                   <a href="#">{{ cite }}</a>
                 </li>
               </ul>
-            </div>
-
-            <!-- 👇 新增：一键复制分诊结果 -->
-            <div class="action-buttons">
-              <el-button type="success" plain @click="copyResult">
-                <el-icon><CopyDocument /></el-icon> 一键复制分诊结果
-              </el-button>
-              <!-- 👇 新增：开始新一轮问诊 -->
-              <el-button type="primary" color="#14b8a6" @click="startNewSession" style="margin-left: 10px;">
-                🆕 开始新的问诊
-              </el-button>
             </div>
           </div>
         </div>
@@ -334,8 +334,16 @@ const fetchMockData = async (query, role) => {
           const size = node.type === 'department' ? 60 : 50
           return { name: node.name, category: category, symbolSize: size }
         })
-
+      
+        
       const dept = data.department
+      // 👇 新增：过滤掉非真实症状节点（如"有"、"没有"、"持续中"）
+      const realSymptoms = ['痛', '晕', '热', '咳', '烧', '吐', '泻', '痒', '肿', '麻']
+      data.graph_nodes = data.graph_nodes.filter(node => {
+        if (node.type !== 'symptom') return true
+        return realSymptoms.some(kw => node.name.includes(kw))
+      })
+
       data.graph_nodes.forEach(node => {
         // 1. 症状 -> 疾病
         if (node.type === 'symptom') {
@@ -743,7 +751,8 @@ onBeforeUnmount(() => {
   border-color: #14b8a6;
   box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.1);
 }
-.input-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 10px;}
+.input-footer { display: flex; justify-content: flex-end; align-items: center; margin-top: 10px; gap: 10px;}
+.input-footer .input-tip { margin-right: auto; }
 .input-tip { font-size: 12px; color: #9ca3af;}
 
 .right-panels { 
