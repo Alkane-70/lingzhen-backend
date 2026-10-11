@@ -381,7 +381,7 @@ const handleSearch = async () => {
     }
   }
 
-  searchResult.value = data
+    searchResult.value = data
   isLoading.value = false
   
   // 等待 DOM 更新后，渲染图谱
@@ -395,13 +395,15 @@ const handleSearch = async () => {
     }, 800)
   })
   
-  // 👇 把写死的假回复换成基于真实数据的结论（后端要求）
-  const aiReply = currentRole.value === 'doctor' 
-    ? data.reason 
-    : `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。`
-  chatHistory.value.push({ role: 'ai', content: aiReply })
+  // 👇 关键修复：只在最终结论时，才拼 aiReply 并 push 到聊天框
+  if (!data.isFollowUp) {
+    const aiReply = currentRole.value === 'doctor' 
+      ? data.reason 
+      : `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。`
+    chatHistory.value.push({ role: 'ai', content: aiReply })
+  }
   queryInput.value = '' 
-} // 🚨 这里补上缺失的大括号！闭合 handleSearch 函数
+}
 
 // 渲染 ECharts 图谱
 // 渲染 ECharts 图谱（最终修复版）
