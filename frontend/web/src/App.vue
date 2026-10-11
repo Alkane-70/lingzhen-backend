@@ -67,7 +67,7 @@
                 <span class="dot"></span>
                 <span class="dot"></span>
                 <span class="dot"></span>
-                <span style="margin-left: 8px;">AI 正在推理中...</span>
+                <span style="margin-left: 8px;">正在检索文献并构建图谱...</span>
               </div>
             </div>
           </div>
@@ -84,7 +84,7 @@
           <div class="input-footer">
             <span class="input-tip">Enter 发送, Shift + Enter 换行</span>
             <el-button type="primary" color="#14b8a6" :loading="isLoading" @click="handleSearch">
-              <el-icon><Promotion /></el-icon> 发送
+              <el-icon><Promotion /></el-icon> {{ isLoading ? 'AI 正在深度思考中...' : '发送' }}
             </el-button>
           </div>
         </div>
@@ -217,57 +217,68 @@ const fetchMockData = async (query, role) => {
       }
     }
 
-    // 3. 不是追问，就是最终结论
+        // 3. 不是追问，就是最终结论
     isFollowUp.value = false
-    
-      //  直接根据后端返回的 type 来染色（医生模式过滤科室，患者模式保留）
-      const nodes = data.graph_nodes
-      .filter(node => {
-        // 医生模式下，过滤掉 department 节点；患者模式保留
-        if (currentRole.value === 'doctor' && node.type === 'department') {
-          return false
-        }
-        return true
-      })
-      .map((node) => {
-        let category = 0 // 症状（黄）
-        if (node.type === 'department') category = 2 // 科室（蓝）
-        if (node.type === 'disease') category = 1    // 疾病（红）
-        if (node.type === 'drug') category = 3       // 药物（绿）
 
-        const size = node.type === 'department' ? 60 : 50
-        return { name: node.name, category: category, symbolSize: size }
+    // 👇 核心修复：图谱降级渲染（防白屏）
+    let nodes = []
+    let links = []
+
+    // 如果 graph_nodes 不存在或少于 2 个节点，直接跳过渲染，返回空图谱
+    if (!data.graph_nodes || data.graph_nodes.length < 2) {
+      console.warn('⚠️ graph_nodes 少于 2 个节点，跳过画图，避免白屏')
+      nodes = []
+      links = []
+    } else {
+      // 原有的画图逻辑
+      nodes = data.graph_nodes
+        .filter(node => {
+          if (currentRole.value === 'doctor' && node.type === 'department') {
+            return false
+          }
+          return true
+        })
+        .map((node) => {
+          let category = 0
+          if (node.type === 'department') category = 2
+          if (node.type === 'disease') category = 1
+          if (node.type === 'drug') category = 3
+          const size = node.type === 'department' ? 60 : 50
+          return { name: node.name, category: category, symbolSize: size }
+        })
+
+      const dept = data.department
+      data.graph_nodes.forEach(node => {
+        // 1. 症状 -> 疾病
+        if (node.type === 'symptom') {
+          const targetDisease = data.graph_nodes.find(n => n.type === 'disease')
+          if (targetDisease) {
+            links.push({ source: node.name, target: targetDisease.name, value: '可能症状' })
+          }
+        }
+        // 2. 疾病 -> 科室
+        if (node.type === 'disease') {
+          links.push({ source: node.name, target: dept, value: '建议就诊' })
+        }
+        // 3. 药物 -> 疾病
+        if (node.type === 'drug') {
+          const targetDisease = data.graph_nodes.find(n => n.type === 'disease')
+          if (targetDisease) {
+            links.push({ source: node.name, target: targetDisease.name, value: '主治' })
+          }
+        }
+        // 4. 兜底：如果没有疾病，症状/药物直接连科室
+        if ((node.type === 'symptom' || node.type === 'drug') && !data.graph_nodes.some(n => n.type === 'disease')) {
+          links.push({ source: node.name, target: dept, value: '相关' })
+        }
       })
+    }
     
-    //  智能生成连线：症状 -> 疾病 -> 科室
-       const links = []
-    const dept = data.department
-    
-    data.graph_nodes.forEach(node => {
-      // 1. 症状 -> 疾病
-      if (node.type === 'symptom') {
-        const targetDisease = data.graph_nodes.find(n => n.type === 'disease')
-        if (targetDisease) {
-          links.push({ source: node.name, target: targetDisease.name, value: '可能症状' })
-        }
-      }
-      // 2. 疾病 -> 科室
-      if (node.type === 'disease') {
-        links.push({ source: node.name, target: dept, value: '建议就诊' })
-      }
-      // 3. 药物 -> 疾病
-      if (node.type === 'drug') {
-        const targetDisease = data.graph_nodes.find(n => n.type === 'disease')
-        if (targetDisease) {
-          links.push({ source: node.name, target: targetDisease.name, value: '主治' })
-        }
-      }
-      // 4. 兜底：如果没有疾病，症状/药物直接连科室
-      if ((node.type === 'symptom' || node.type === 'drug') && !data.graph_nodes.some(n => n.type === 'disease')) {
-        links.push({ source: node.name, target: dept, value: '相关' })
-      }
-    })
-    
+    // 👇 排查图谱问题：打印后端返回的原始 graph_nodes 和前端拼好的 nodes
+    console.log('🔍 后端原始 graph_nodes:', data.graph_nodes)
+    console.log('🔍 前端拼好的 nodes:', nodes)
+    console.log('🔍 前端拼好的 links:', links)
+
     return {
         summary: role === 'doctor' 
         ? data.reason 
@@ -384,13 +395,15 @@ const handleSearch = async () => {
     searchResult.value = data
   isLoading.value = false
   
-  // 等待 DOM 更新后，渲染图谱
   nextTick(() => {
     setTimeout(() => {
       isGraphLoading.value = false
       // 🚨 核心修复：只有数据合法且有节点时才画图！
+      console.log('🎨 准备画图，此时 graphData 为:', data.graphData)
       if (data.graphData && data.graphData.nodes && data.graphData.nodes.length > 0) {
         renderGraph(data.graphData)
+      } else {
+        console.warn('⚠️ graphData 为空或节点数为 0，跳过画图')
       }
     }, 800)
   })
