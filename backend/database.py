@@ -1,5 +1,6 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float
+from sqlalchemy import create_engine, Column, Integer, String, Float,DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
+import datetime
 
 # 数据库文件保存在 backend 文件夹下，名为 lingzhen.db
 SQLALCHEMY_DATABASE_URL = "sqlite:///./backend/lingzhen.db"
@@ -27,6 +28,8 @@ class DiagnosisRecord(Base):
     reason = Column(String)
     session_id = Column(String, default="default")  # 会话ID，用来关联多轮对话
     severity = Column(String, default="mild")
+    created_at = Column(DateTime, default=datetime.datetime.now)
+    chat_history = Column(String)
 
 # 自动创建表
 Base.metadata.create_all(bind=engine)
