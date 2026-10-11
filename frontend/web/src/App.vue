@@ -179,6 +179,10 @@
               <el-button type="success" plain @click="copyResult">
                 <el-icon><CopyDocument /></el-icon> 一键复制分诊结果
               </el-button>
+              <!-- 👇 新增：开始新一轮问诊 -->
+              <el-button type="primary" color="#14b8a6" @click="startNewSession" style="margin-left: 10px;">
+                🆕 开始新的问诊
+              </el-button>
             </div>
           </div>
         </div>
@@ -221,6 +225,19 @@ const handleLogout = () => {
   username.value = ''
   currentPage.value = 'chat'
   ElMessage.success('已退出登录')
+}
+
+// 👇 开始新一轮问诊：重置所有状态
+const startNewSession = () => {
+  chatHistory.value = []
+  sessionId.value = Date.now().toString()
+  isFollowUp.value = false
+  searchResult.value = null
+  if (myChart) {
+    myChart.dispose()
+    myChart = null
+  }
+  ElMessage.success('已开启新一轮问诊')
 }
 
 const currentRole = ref('patient')
@@ -329,14 +346,23 @@ const fetchMockData = async (query, role) => {
     console.log('🔍 前端拼好的 nodes:', nodes)
     console.log('🔍 前端拼好的 links:', links)
 
+        // 👇 核心修复：只有在非追问时，才拼接最终结论，避免 undefined
+    let finalSummary = ''
+    if (!data.is_follow_up) {
+      const dept = data.department || '全科门诊'
+      const reason = data.reason || '暂无明确理由，请注意休息'
+      finalSummary = role === 'doctor' 
+        ? reason 
+        : `建议前往【${dept}】。理由：${reason}`
+    }
+
     return {
-        summary: role === 'doctor' 
-        ? data.reason 
-        : `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。此结论仅做科普参考。`,
+      isFollowUp: false,
+      summary: finalSummary,
       citations: ['智谱AI GLM-4-Flash 实时生成', '《内科学（第9版）》'],
       confidence: data.confidence,
-      severity: data.severity,       
-      department: data.department,   
+      severity: data.severity,
+      department: data.department,
       graphData: { nodes, links }
     }
    } catch (error) {
@@ -360,6 +386,17 @@ const handleSearch = async () => {
     return
   }
   
+  // 👇 如果上一轮已经有了最终结论，用户直接输入新问题，自动重置
+  if (!isFollowUp.value && searchResult.value !== null) {
+    // 说明上一轮已经结束，用户又开始新问题，先清空
+    chatHistory.value = []
+    sessionId.value = Date.now().toString()
+    if (myChart) {
+      myChart.dispose()
+      myChart = null
+    }
+  }
+
   const userMessage = queryInput.value
   chatHistory.value.push({ role: 'user', content: userMessage })
   
@@ -459,10 +496,12 @@ const handleSearch = async () => {
   })
   
   // 👇 关键修复：只在最终结论时，才拼 aiReply 并 push 到聊天框
-  if (!data.isFollowUp) {
+    if (!data.isFollowUp) {
+    const dept = data.department || '全科门诊'
+    const reason = data.reason || '暂无明确理由，请注意休息'
     const aiReply = currentRole.value === 'doctor' 
-      ? data.reason 
-      : `根据您的描述，建议您前往【${data.department}】就诊。理由：${data.reason}。`
+      ? reason 
+      : `根据您的描述，建议您前往【${dept}】就诊。理由：${reason}。`
     chatHistory.value.push({ role: 'ai', content: aiReply })
   }
   queryInput.value = '' 
