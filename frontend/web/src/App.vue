@@ -207,7 +207,14 @@
       <span>本系统仅为健康科普/资料查阅辅助工具，不替代执业医师诊断</span>
     </footer>
     <!-- 👇 游客点击"登录/注册"时弹出的对话框 -->
-    <el-dialog v-model="showLoginDialog" width="420px" :show-close="true" append-to-body>
+    <el-dialog 
+      v-model="showLoginDialog" 
+      width="520px" 
+      :show-close="true" 
+      append-to-body
+      top="5vh"
+      :close-on-click-modal="false"
+    >
       <Login @login-success="handleLoginSuccess" />
     </el-dialog>
     </template>
