@@ -382,7 +382,7 @@ const fetchMockData = async (query, role) => {
       const reason = data.reason || '暂无明确理由，请注意休息'
       finalSummary = role === 'doctor' 
         ? reason 
-        : `建议前往【${dept}】。理由：${reason}`
+        : `建议前往【${dept}】。建议：${reason}`
     }
 
     return {
@@ -492,7 +492,7 @@ const handleSearch = async () => {
     if (data.severity === 'severe') {
       ElNotification({
         title: '⚠️ 重症预警，请立即就医！',
-        message: `建议立即前往【${dept}】急诊！理由：${reason}`,
+        message: `建议立即前往【${dept}】就诊！具体建议：${reason}`,
         type: 'error',
         duration: 0,
         position: 'top-right'
@@ -500,7 +500,7 @@ const handleSearch = async () => {
     } else if (data.severity === 'mild') {
       ElNotification({
         title: '健康建议（轻症）',
-        message: `建议参考用药：${reason}。若症状加重请及时就医。`,
+        message: `建议：${reason}`,
         type: 'success',
         duration: 5000,
         position: 'top-right'
