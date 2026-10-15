@@ -26,10 +26,12 @@
 在项目**根目录**新建一个 `.env` 文件（不要提交到Git），填入你的API Key：
 ```env
 ZHIPU_API_KEY=你的智谱API_KEY
+```
 
 ### 3. 启动后端 (FastAPI)
 打开终端，在项目根目录下执行：
 
+```env
 # 创建并激活虚拟环境
 python -m venv venv
 # Windows:
@@ -42,15 +44,18 @@ pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
 # 启动后端服务
 python -m uvicorn backend.main:app --reload
+```
 
 后端启动成功后，可访问 http://127.0.0.1:8000/docs 查看接口文档。
 
 ### 4. 启动前端 (Vue3)
 新开一个终端，进入前端目录并启动：
 
+```env
 cd frontend/web
 npm install
 npm run dev
+```
 
 前端启动成功后，浏览器访问终端提示的地址（通常是 http://localhost:5173）即可使用系统。
 
