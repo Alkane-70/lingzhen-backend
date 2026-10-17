@@ -326,55 +326,61 @@ const fetchMockData = async (query, role) => {
       links = []
     } else {
       // 原有的画图逻辑
-      nodes = data.graph_nodes
-        .filter(node => {
-          if (currentRole.value === 'doctor' && node.type === 'department') {
-            return false
-          }
-          return true
-        })
-        .map((node) => {
-          let category = 0
-          if (node.type === 'department') category = 2
-          if (node.type === 'disease') category = 1
-          if (node.type === 'drug') category = 3
-          const size = node.type === 'department' ? 60 : 50
-          return { name: node.name, category: category, symbolSize: size }
-        })
-      
-        
-      const dept = data.department
-      // 👇 新增：过滤掉非真实症状节点（如"有"、"没有"、"持续中"）
+            // 👇 后端提供的“强无敌连线法”
+      // 1. 先过滤掉无用的非真实症状节点
       const realSymptoms = ['痛', '晕', '热', '咳', '烧', '吐', '泻', '痒', '肿', '麻']
-      data.graph_nodes = data.graph_nodes.filter(node => {
-        if (node.type !== 'symptom') return true
-        return realSymptoms.some(kw => node.name.includes(kw))
+      const rawNodes = (data.graph_nodes || []).filter(node => {
+        if (node.type === 'symptom') {
+          return realSymptoms.some(kw => node.name.includes(kw))
+        }
+        // 医生模式过滤科室，患者模式保留
+        if (currentRole.value === 'doctor' && node.type === 'department') {
+          return false
+        }
+        return true
       })
 
-      data.graph_nodes.forEach(node => {
-        // 1. 症状 -> 疾病
-        if (node.type === 'symptom') {
-          const targetDisease = data.graph_nodes.find(n => n.type === 'disease')
-          if (targetDisease) {
-            links.push({ source: node.name, target: targetDisease.name, value: '可能症状' })
-          }
-        }
-        // 2. 疾病 -> 科室
-        if (node.type === 'disease') {
-          links.push({ source: node.name, target: dept, value: '建议就诊' })
-        }
-        // 3. 药物 -> 疾病
-        if (node.type === 'drug') {
-          const targetDisease = data.graph_nodes.find(n => n.type === 'disease')
-          if (targetDisease) {
-            links.push({ source: node.name, target: targetDisease.name, value: '主治' })
-          }
-        }
-        // 4. 兜底：如果没有疾病，症状/药物直接连科室
-        if ((node.type === 'symptom' || node.type === 'drug') && !data.graph_nodes.some(n => n.type === 'disease')) {
-          links.push({ source: node.name, target: dept, value: '相关' })
+      // 2. 转 ECharts 节点
+      nodes = rawNodes.map(node => {
+        let category = 0 // 症状（黄）
+        if (node.type === 'department') category = 2 // 科室（蓝）
+        if (node.type === 'disease') category = 1    // 疾病（红）
+        if (node.type === 'drug') category = 3       // 药物（绿）
+        
+        return {
+          name: node.name,
+          category: category,
+          symbolSize: 60 // 美化大小
         }
       })
+
+      // 3. 自动分类提取名字
+      const symptomNodes = rawNodes.filter(n => n.type === 'symptom').map(n => n.name)
+      const diseaseNodes = rawNodes.filter(n => n.type === 'disease').map(n => n.name)
+      const deptNodes = rawNodes.filter(n => n.type === 'department').map(n => n.name)
+
+      // 4. 强行画连线
+      links = []
+      // 4.1 症状 -> 疾病
+      symptomNodes.forEach(s => {
+        diseaseNodes.forEach(d => {
+          links.push({ source: s, target: d, value: '可能症状' })
+        })
+      })
+      // 4.2 疾病 -> 科室
+      diseaseNodes.forEach(d => {
+        deptNodes.forEach(dept => {
+          links.push({ source: d, target: dept, value: '建议就诊' })
+        })
+      })
+      // 4.3 兜底：如果没有疾病，症状直接连科室
+      if (diseaseNodes.length === 0) {
+        symptomNodes.forEach(s => {
+          deptNodes.forEach(dept => {
+            links.push({ source: s, target: dept, value: '相关' })
+          })
+        })
+      }
     }
     
     // 👇 排查图谱问题：打印后端返回的原始 graph_nodes 和前端拼好的 nodes
